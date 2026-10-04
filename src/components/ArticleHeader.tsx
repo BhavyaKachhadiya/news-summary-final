@@ -55,7 +55,7 @@ export function ArticleHeader({
       </div>
 
       {/* Editorial Headline */}
-      <h1 className="text-2xl sm:text-3xl lg:text-[36px] font-bold tracking-tight text-white leading-[1.25] max-w-4xl">
+      <h1 className="text-2xl sm:text-3xl lg:text-[36px] font-bold tracking-tight text-white leading-tight max-w-4xl">
         {headline}
       </h1>
 

@@ -109,7 +109,7 @@ Use this structure:
 
 11. JSON Rules
 * Return valid JSON only.
-* Do NOT use Markdown.
+* You CAN generate Markdown text format (such as **bold** for key concepts and terms, *italics*, and inline code) inside JSON string values.
 * Do NOT include \`\`\`json or code fences.
 * Do NOT add text before or after the JSON.
 * Escape quotation marks correctly.

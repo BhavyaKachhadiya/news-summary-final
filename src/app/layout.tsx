@@ -53,7 +53,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-[#000000] text-[#ffffff] selection:bg-white selection:text-black">
         <Header />
-        <main className="flex-1 max-w-[1300px] w-full mx-auto px-4 sm:px-8 py-10">
+        <main className="flex-1 max-w-325 w-full mx-auto px-4 sm:px-8 py-10">
           {children}
         </main>
         <Footer />

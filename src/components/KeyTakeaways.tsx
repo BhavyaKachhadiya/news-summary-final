@@ -1,4 +1,5 @@
 import React from "react";
+import { FormattedMarkdownText } from "./FormattedMarkdownText";
 
 interface KeyTakeawaysProps {
   takeaways: string[];
@@ -31,7 +32,7 @@ export function KeyTakeaways({ takeaways, className = "" }: KeyTakeawaysProps) {
                 {numStr}
               </span>
               <p className="text-xs sm:text-sm leading-relaxed text-[#f0f0f0] font-normal pt-0.5">
-                {takeaway}
+                <FormattedMarkdownText text={takeaway} stripLeadingNumber={true} />
               </p>
             </div>
           );
