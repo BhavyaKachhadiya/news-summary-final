@@ -75,13 +75,33 @@ export async function extractArticleContent(
       ".author-details, .tag-cloud, .cookie-consent, [id*='ad-']"
     ).remove();
 
-    // Check specific selectors for article body (The Hindu & Bhaskar English)
+    // Body selectors covering all sources (The Hindu, Bhaskar, BBC, TechCrunch, The Verge, ET, Moneycontrol, NDTV, Indian Express, TOI, HT, Reuters)
     const bodySelectors = [
       "div.articlebodycontent",
       "div[itemprop='articleBody']",
       "div.article-content",
       ".content-body",
       "div._articleBody",
+      ".entry-content",
+      ".wp-block-post-content",
+      ".c-entry-content",
+      "[data-component='text-block']",
+      ".articleshow_page",
+      ".articleColsWrapper",
+      "[class*='contentDivWrapper']",
+      "[class*='artText']",
+      ".content_wrapper",
+      "#content_wrapper",
+      ".arti-flow",
+      ".content_text",
+      "#ins_storybody",
+      ".story__content",
+      ".story-details",
+      ".ev-meter-content",
+      ".js_tbl_article",
+      "._s30J",
+      ".storyDetails",
+      ".detail",
       "article .body",
       "article",
       "main",
@@ -113,6 +133,24 @@ export async function extractArticleContent(
             break;
           }
         }
+      }
+    }
+
+    // Try Times of India and Economic Times specific content wrappers (which may use text divs instead of <p>)
+    if (paragraphs.length < 2) {
+      const complexContainer = $(".js_tbl_article, .articleColsWrapper, [class*='contentDivWrapper']");
+      if (complexContainer.length > 0) {
+        complexContainer.find("div, p, span").each((_, el) => {
+          const directText = $(el).clone().children().remove().end().text().trim();
+          if (
+            directText.length > 40 &&
+            !paragraphs.includes(directText) &&
+            !directText.toLowerCase().includes("subscribe") &&
+            !directText.toLowerCase().includes("download app")
+          ) {
+            paragraphs.push(directText);
+          }
+        });
       }
     }
 

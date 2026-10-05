@@ -1,5 +1,5 @@
 export const BUSINESS_PROMPT_TEMPLATE = `You are an expert business journalist, financial analyst, and news editor.
-Your task is to create a comprehensive, detailed, and factually accurate summary of the following business news article from The Hindu.
+Your task is to create a comprehensive, detailed, and factually accurate summary of the following business news article.
 The goal is NOT to create a short summary.
 Create a full, detailed, easy-to-understand version of the article that preserves the important information, context, financial data, economic implications, statements, developments, and facts from the original article.
 A reader should be able to understand almost everything important in the original article without reading the full article.

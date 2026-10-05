@@ -12,8 +12,8 @@ export function Footer() {
             SIGNAL / AI NEWS
           </div>
           <p className="text-[#666666] leading-relaxed max-w-md">
-            Continuous automated news intelligence platform. Ingests reporting from The Hindu and
-            Bhaskar English, extracts context, and synthesizes structured editorial summaries with Google Gemini.
+            Continuous automated news intelligence platform. Ingests reporting from leading global and
+            Indian publishers, extracts context, and synthesizes structured editorial summaries with Google Gemini.
           </p>
           <div className="font-mono text-[11px] text-[#555555]">
             STRICT MONOCHROME EDITORIAL ENGINE
@@ -25,7 +25,7 @@ export function Footer() {
           <div className="font-mono text-[11px] uppercase tracking-widest text-[#a3a3a3] mb-3">
             RSS FEEDS
           </div>
-          <ul className="space-y-1.5 font-mono text-[11px]">
+          <ul className="space-y-1.5 font-mono text-[11px] max-h-60 overflow-y-auto pr-2">
             {RSS_FEED_CONFIGS.map((feed) => (
               <li key={feed.url}>
                 <a
@@ -68,7 +68,7 @@ export function Footer() {
 
       <div className="max-w-[1300px] mx-auto pt-8 border-t border-[#1a1a1a] flex flex-col sm:flex-row items-center justify-between text-[11px] font-mono text-[#555555] gap-4">
         <p>
-          JOURNALISTIC REPORTING COPYRIGHT &copy; {new Date().getFullYear()} RESPECTIVE PUBLISHERS (THE HINDU &amp; BHASKAR ENGLISH). SUMMARIES ARE AI-GENERATED.
+          JOURNALISTIC REPORTING COPYRIGHT &copy; {new Date().getFullYear()} RESPECTIVE PUBLISHERS. SUMMARIES ARE AI-GENERATED.
         </p>
         <p>SIGNAL TERMINAL / ENGINE V1.0</p>
       </div>

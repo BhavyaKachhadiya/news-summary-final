@@ -101,7 +101,7 @@ export function Header() {
               <button
                 onClick={handleQuickSync}
                 disabled={isSyncing}
-                title="Fetch RSS updates from The Hindu"
+                title="Fetch RSS updates from all configured news sources"
                 className="hidden sm:inline-flex items-center gap-1.5 font-mono text-[11px] px-2.5 py-1 border border-[#242424] text-[#888888] hover:text-white hover:border-[#444444] transition-colors disabled:opacity-50"
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${isSyncing ? "bg-white animate-ping" : "bg-[#555555]"}`} />

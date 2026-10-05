@@ -1,5 +1,5 @@
 export const TECHNOLOGY_PROMPT_TEMPLATE = `You are an expert technology journalist, researcher, and news editor.
-Your task is to create a comprehensive, detailed, and factually accurate summary of the following technology news article from The Hindu.
+Your task is to create a comprehensive, detailed, and factually accurate summary of the following technology news article.
 The goal is NOT to produce a short summary. Instead, create a detailed version of the article in simpler and clearer language, preserving all important information, context, technical details, events, statements, numbers, dates, and explanations from the original article.
 The reader should be able to understand almost everything important from the original article without needing to read the full article.
 

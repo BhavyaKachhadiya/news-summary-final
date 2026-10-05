@@ -1,7 +1,7 @@
 import React from "react";
 import type { Metadata } from "next";
 import { getArticles, getNewsStats } from "@/services/news.service";
-import { CategoryTabs } from "@/components/CategoryTabs";
+import { SourceFilterTabs } from "@/components/SourceFilterTabs";
 import { NewsGrid } from "@/components/NewsGrid";
 import { EmptyState } from "@/components/EmptyState";
 import { NewsListResponse, NewsStats } from "@/types/news";
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Business & Markets",
   description:
-    "Business, financial markets, and economic developments from The Hindu, explained clearly by AI. RBI policies, corporate financials, SEBI regulations, and macroeconomic data.",
+    "Business, financial markets, and economic developments explained clearly by AI. Corporate financials, macroeconomic trends, and market analysis from top publishers.",
 };
 
 interface PageProps {
@@ -22,6 +22,7 @@ export default async function BusinessPage({ searchParams }: PageProps) {
   const resolvedParams = await searchParams;
   const page = typeof resolvedParams.page === "string" ? parseInt(resolvedParams.page, 10) : 1;
   const search = typeof resolvedParams.search === "string" ? resolvedParams.search : "";
+  const source = typeof resolvedParams.source === "string" ? resolvedParams.source : "all";
 
   let articlesData: NewsListResponse = {
     articles: [],
@@ -42,6 +43,7 @@ export default async function BusinessPage({ searchParams }: PageProps) {
     const [fetchedArticles, fetchedStats] = await Promise.all([
       getArticles({
         category: "business",
+        source,
         page,
         limit: 12,
         search,
@@ -54,6 +56,8 @@ export default async function BusinessPage({ searchParams }: PageProps) {
   } catch (error) {
     console.error("[Business Page] Error loading articles:", error);
   }
+
+  const availableSources = articlesData.sources || stats.sources || [];
 
   return (
     <div className="space-y-12">
@@ -68,16 +72,16 @@ export default async function BusinessPage({ searchParams }: PageProps) {
         </h1>
 
         <p className="text-base sm:text-lg text-[#a3a3a3] max-w-2xl leading-relaxed font-normal">
-          Business, markets, and economic developments from The Hindu explained clearly.
-          Balance sheets, RBI interest rate decisions, SEBI regulations, inflation, and GDP figures.
+          Business, markets, and economic developments explained clearly by AI.
+          Balance sheets, interest rate decisions, regulations, inflation, and GDP figures.
         </p>
 
-        {/* Category Tabs */}
+        {/* Source Filter Tabs */}
         <div className="pt-2">
-          <CategoryTabs
-            totalCount={stats.total}
-            techCount={stats.byCategory.technology}
-            bizCount={stats.byCategory.business}
+          <SourceFilterTabs
+            sources={availableSources}
+            activeSource={source}
+            baseUrl="/business"
           />
         </div>
       </section>

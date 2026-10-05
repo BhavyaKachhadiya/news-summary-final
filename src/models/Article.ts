@@ -39,6 +39,11 @@ const ArticleSchema = new Schema<ArticleModelFields>(
       type: String,
       default: "",
     },
+    imageUrl: {
+      type: String,
+      default: null,
+      trim: true,
+    },
     category: {
       type: String,
       enum: ["technology", "business"],
@@ -116,6 +121,17 @@ ArticleSchema.index({
   summaryStatus: 1,
   summaryStartedAt: 1,
 });
+
+// Index on publishedAt for quick chronological and date-range queries
+ArticleSchema.index({
+  publishedAt: -1,
+});
+
+// TTL index on createdAt: automatically delete documents 3 days (259,200 seconds) after creation
+ArticleSchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: 3 * 24 * 60 * 60 }
+);
 
 // Mongoose Model with HydratedDocument support
 export const Article: Model<ArticleModelFields> =

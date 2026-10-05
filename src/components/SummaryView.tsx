@@ -78,6 +78,84 @@ function FormattedArticleContent({
   );
 }
 
+function cleanErrorMessage(rawError?: string | null): {
+  headline: string;
+  description: string;
+  badge?: string;
+  isTransient: boolean;
+} {
+  if (!rawError || !rawError.trim()) {
+    return {
+      headline: "Summary Not Yet Generated",
+      description:
+        "An in-depth AI executive summary has not been generated for this article yet. You can generate it on demand below or read the original reporting.",
+      isTransient: false,
+    };
+  }
+
+  // Handle embedded JSON string like {"error":{"code":503,"message":"...","status":"UNAVAILABLE"}}
+  let message = rawError;
+  try {
+    const parsed = JSON.parse(rawError);
+    if (parsed?.error?.message) {
+      message = parsed.error.message;
+    } else if (parsed?.message) {
+      message = parsed.message;
+    }
+  } catch {
+    // Not valid JSON, continue with raw message
+  }
+
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes("503") ||
+    lower.includes("high demand") ||
+    lower.includes("unavailable") ||
+    lower.includes("overloaded")
+  ) {
+    return {
+      headline: "AI Service Temporarily Busy",
+      description:
+        "Google Gemini is currently experiencing high demand. Spikes in traffic are usually temporary and clear within a few moments.",
+      badge: "HTTP 503 • HIGH DEMAND",
+      isTransient: true,
+    };
+  }
+
+  if (
+    lower.includes("429") ||
+    lower.includes("quota") ||
+    lower.includes("resource_exhausted") ||
+    lower.includes("rate limit")
+  ) {
+    return {
+      headline: "Rate Limit Exceeded",
+      description:
+        "The Gemini API rate limit has been temporarily reached. Please wait a moment before retrying.",
+      badge: "HTTP 429 • RATE LIMITED",
+      isTransient: true,
+    };
+  }
+
+  if (lower.includes("timed out") || lower.includes("timeout")) {
+    return {
+      headline: "Request Timed Out",
+      description:
+        "The AI synthesis request took longer than expected to respond. Please try again.",
+      badge: "TIMEOUT",
+      isTransient: true,
+    };
+  }
+
+  return {
+    headline: "Summary Generation Error",
+    description: message.replace(/^Error:\s*/i, ""),
+    badge: "ERROR",
+    isTransient: false,
+  };
+}
+
 export function SummaryView({ article }: SummaryViewProps) {
   const [currentArticle, setCurrentArticle] = useState<ArticleDocument>(article);
   const [isSummarizing, setIsSummarizing] = useState(
@@ -525,28 +603,44 @@ export function SummaryView({ article }: SummaryViewProps) {
       )}
 
       {/* Error / Manual Retry Notice */}
-      {!isSummarizing && (!summary || currentArticle.summaryStatus !== "completed") && (
-        <div className="border border-[#333333] bg-[#0a0a0a] p-6 w-full space-y-3">
-          <div className="font-mono text-xs uppercase text-white font-bold tracking-wider">
-            {currentArticle.summaryStatus === "failed"
-              ? "SUMMARY GENERATION FAILED"
-              : "SUMMARY NOT YET GENERATED"}
+      {!isSummarizing && (!summary || currentArticle.summaryStatus !== "completed") && (() => {
+        const errInfo = cleanErrorMessage(errorMsg || currentArticle.summaryError);
+        return (
+          <div className="border border-[#2e2e2e] bg-[#0c0c0c] p-6 sm:p-7 w-full space-y-4 rounded-none transition-all">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1f1f1f] pb-3">
+              <div className="flex items-center gap-2.5 font-mono text-xs uppercase tracking-wider">
+                <span className={`w-2 h-2 rounded-full ${errInfo.isTransient ? "bg-amber-400" : "bg-red-400"}`} />
+                <span className="text-white font-semibold">
+                  {currentArticle.summaryStatus === "failed" ? errInfo.headline : "SUMMARY NOT YET GENERATED"}
+                </span>
+              </div>
+              {errInfo.badge && (
+                <span className="font-mono text-[10px] text-[#888888] px-2 py-0.5 border border-[#262626] bg-[#141414] uppercase tracking-wider">
+                  {errInfo.badge}
+                </span>
+              )}
+            </div>
+
+            <p className="text-xs sm:text-sm text-[#a3a3a3] leading-relaxed font-normal max-w-3xl">
+              {errInfo.description}
+            </p>
+
+            <div className="pt-2 flex flex-wrap items-center gap-4">
+              <button
+                onClick={() => handleGenerateSummary(true)}
+                className="font-mono text-xs uppercase px-4 py-2 border border-white bg-white hover:bg-[#e0e0e0] text-black font-semibold transition-all tracking-wider inline-flex items-center gap-2"
+              >
+                <span>↺</span>
+                <span>RETRY SUMMARY GENERATION</span>
+              </button>
+
+              <span className="font-mono text-[11px] text-[#666666]">
+                Original reporting is available above without AI synthesis.
+              </span>
+            </div>
           </div>
-          <p className="text-xs text-[#888888]">
-            {errorMsg ||
-              currentArticle.summaryError ||
-              "An in-depth summary has not been generated for this article yet. You can read the original reporting above."}
-          </p>
-          <div className="pt-2">
-            <button
-              onClick={() => handleGenerateSummary(true)}
-              className="font-mono text-xs uppercase px-4 py-2 border border-[#444444] bg-[#141414] hover:bg-white hover:text-black text-white transition-colors"
-            >
-              [ RETRY SUMMARY GENERATION ]
-            </button>
-          </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* VIEW SWITCHER TOOLBAR & SUMMARY (When summary IS ready) */}
       {isSummaryReady && (
@@ -648,16 +742,6 @@ export function SummaryView({ article }: SummaryViewProps) {
                   <p className="text-xs text-[#999999] leading-relaxed">
                     Synthesizing executive intelligence from original reporting. Navigating automatically once generated.
                   </p>
-                  <div className="pt-1.5">
-                    <button
-                      onClick={() => {
-                        skeletonRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-                      }}
-                      className="font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 border border-[#333333] bg-[#141414] hover:bg-white hover:text-black text-[#cccccc] transition-colors"
-                    >
-                      VIEW SKELETON ↓
-                    </button>
-                  </div>
                 </div>
               </div>
               <button

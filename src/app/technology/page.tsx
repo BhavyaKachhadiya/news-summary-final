@@ -1,7 +1,7 @@
 import React from "react";
 import type { Metadata } from "next";
 import { getArticles, getNewsStats } from "@/services/news.service";
-import { CategoryTabs } from "@/components/CategoryTabs";
+import { SourceFilterTabs } from "@/components/SourceFilterTabs";
 import { NewsGrid } from "@/components/NewsGrid";
 import { EmptyState } from "@/components/EmptyState";
 import { NewsListResponse, NewsStats } from "@/types/news";
@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Technology",
   description:
-    "Latest technology news from The Hindu, synthesized and explained clearly by AI. Hardware, software, AI breakthroughs, and cybersecurity.",
+    "Latest technology news synthesized and explained clearly by AI. Hardware, software, AI breakthroughs, and cybersecurity from top global and Indian publishers.",
 };
 
 interface PageProps {
@@ -22,6 +22,7 @@ export default async function TechnologyPage({ searchParams }: PageProps) {
   const resolvedParams = await searchParams;
   const page = typeof resolvedParams.page === "string" ? parseInt(resolvedParams.page, 10) : 1;
   const search = typeof resolvedParams.search === "string" ? resolvedParams.search : "";
+  const source = typeof resolvedParams.source === "string" ? resolvedParams.source : "all";
 
   let articlesData: NewsListResponse = {
     articles: [],
@@ -42,6 +43,7 @@ export default async function TechnologyPage({ searchParams }: PageProps) {
     const [fetchedArticles, fetchedStats] = await Promise.all([
       getArticles({
         category: "technology",
+        source,
         page,
         limit: 12,
         search,
@@ -54,6 +56,8 @@ export default async function TechnologyPage({ searchParams }: PageProps) {
   } catch (error) {
     console.error("[Technology Page] Error loading articles:", error);
   }
+
+  const availableSources = articlesData.sources || stats.sources || [];
 
   return (
     <div className="space-y-12">
@@ -68,16 +72,16 @@ export default async function TechnologyPage({ searchParams }: PageProps) {
         </h1>
 
         <p className="text-base sm:text-lg text-[#a3a3a3] max-w-2xl leading-relaxed font-normal">
-          Latest technology reporting from The Hindu, explained clearly by AI.
+          Latest technology reporting explained clearly by AI.
           Hardware launches, models, cybersecurity, chips, and digital policy.
         </p>
 
-        {/* Category Tabs */}
+        {/* Source Filter Tabs */}
         <div className="pt-2">
-          <CategoryTabs
-            totalCount={stats.total}
-            techCount={stats.byCategory.technology}
-            bizCount={stats.byCategory.business}
+          <SourceFilterTabs
+            sources={availableSources}
+            activeSource={source}
+            baseUrl="/technology"
           />
         </div>
       </section>

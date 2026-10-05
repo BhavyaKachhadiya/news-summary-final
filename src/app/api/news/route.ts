@@ -13,6 +13,7 @@ export async function GET(request: NextRequest) {
       page: searchParams.get("page") ?? undefined,
       limit: searchParams.get("limit") ?? undefined,
       category: searchParams.get("category") ?? undefined,
+      source: searchParams.get("source") ?? undefined,
       search: searchParams.get("search") ?? undefined,
       status: searchParams.get("status") ?? undefined,
     };
@@ -26,10 +27,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const { page, limit, category, search, status } = parsed.data;
+    const { page, limit, category, source, search, status } = parsed.data;
 
     const data = await getArticles({
       category,
+      source,
       page,
       limit,
       search,

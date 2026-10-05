@@ -31,6 +31,13 @@ export const PaginationQuerySchema = z.object({
       if (val === "technology" || val === "business") return val;
       return "all" as const;
     }),
+  source: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (!val || val.trim().toLowerCase() === "all") return undefined;
+      return val.trim().slice(0, 100);
+    }),
   search: z
     .string()
     .optional()

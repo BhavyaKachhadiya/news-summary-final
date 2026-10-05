@@ -75,6 +75,7 @@ export interface RssArticle {
   url: string;
   guid?: string | null;
   description: string;
+  imageUrl?: string | null;
   publishedAt: Date;
   category: NewsCategory;
   author?: string;
@@ -88,6 +89,7 @@ export interface ArticleDocument {
   title: string;
   description: string;
   content: string;
+  imageUrl?: string | null;
   category: NewsCategory;
   author: string;
   publishedAt: Date | string;
@@ -109,6 +111,8 @@ export interface NewsListResponse {
   limit: number;
   totalPages: number;
   category?: NewsCategory | "all";
+  source?: string;
+  sources?: string[];
 }
 
 export interface NewsStats {
@@ -123,5 +127,6 @@ export interface NewsStats {
     processing: number;
     failed: number;
   };
+  sources?: string[];
   lastSyncedAt?: string | null;
 }

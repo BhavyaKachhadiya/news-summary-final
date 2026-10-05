@@ -1,6 +1,6 @@
 import React from "react";
 import { getArticles, getNewsStats } from "@/services/news.service";
-import { CategoryTabs } from "@/components/CategoryTabs";
+import { SourceFilterTabs } from "@/components/SourceFilterTabs";
 import { FeaturedArticle } from "@/components/FeaturedArticle";
 import { NewsGrid } from "@/components/NewsGrid";
 import { EmptyState } from "@/components/EmptyState";
@@ -17,6 +17,7 @@ export default async function HomePage({ searchParams }: PageProps) {
   const resolvedParams = await searchParams;
   const page = typeof resolvedParams.page === "string" ? parseInt(resolvedParams.page, 10) : 1;
   const search = typeof resolvedParams.search === "string" ? resolvedParams.search : "";
+  const source = typeof resolvedParams.source === "string" ? resolvedParams.source : "all";
 
   let articlesData: NewsListResponse = {
     articles: [],
@@ -38,6 +39,7 @@ export default async function HomePage({ searchParams }: PageProps) {
     const [fetchedArticles, fetchedStats] = await Promise.all([
       getArticles({
         category: "all",
+        source,
         page,
         limit: 13, // 1 featured + 12 grid items
         search,
@@ -51,9 +53,10 @@ export default async function HomePage({ searchParams }: PageProps) {
     console.error("[Home Page] Error fetching data:", error);
   }
 
+  const availableSources = articlesData.sources || stats.sources || [];
   const hasArticles = articlesData.articles.length > 0;
-  // If not searching and on page 1, pull out the first article as Featured
-  const isDefaultView = !search && page === 1;
+  // If not searching, no specific source filter, and on page 1, pull out the first article as Featured
+  const isDefaultView = !search && (!source || source === "all") && page === 1;
   const featured = isDefaultView && hasArticles ? articlesData.articles[0] : null;
   const gridArticles = isDefaultView && hasArticles
     ? articlesData.articles.slice(1)
@@ -73,17 +76,17 @@ export default async function HomePage({ searchParams }: PageProps) {
             LATEST INTELLIGENCE
           </h1>
           <p className="text-base sm:text-lg text-[#a3a3a3] leading-relaxed font-normal">
-            AI-generated summaries of the latest technology and business reporting from The Hindu.
+            AI-generated summaries of the latest technology and business reporting from top global and Indian publishers.
             Technical specs, market figures, and quotes preserved without noise.
           </p>
         </div>
 
-        {/* Category Tabs */}
-        <div className="pt-2 flex items-center justify-between">
-          <CategoryTabs
-            totalCount={stats.total}
-            techCount={stats.byCategory.technology}
-            bizCount={stats.byCategory.business}
+        {/* Source Filter Tabs */}
+        <div className="pt-2">
+          <SourceFilterTabs
+            sources={availableSources}
+            activeSource={source}
+            baseUrl="/"
           />
         </div>
       </section>
@@ -107,7 +110,7 @@ export default async function HomePage({ searchParams }: PageProps) {
           message={
             search
               ? `No articles match "${search}". Try searching for another term.`
-              : "Sync the RSS feeds from The Hindu to populate technology and business intelligence."
+              : "Sync news feeds to populate technology and business intelligence."
           }
           actionText={search ? "CLEAR SEARCH" : "REFRESH"}
           actionHref="/"

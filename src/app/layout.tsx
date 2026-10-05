@@ -27,22 +27,30 @@ export const metadata: Metadata = {
     default: "SIGNAL — AI Technology & Business Intelligence",
   },
   description:
-    "Editorial news platform synthesizing in-depth Technology and Business reporting from The Hindu into comprehensive intelligence summaries with Google Gemini.",
+    "Editorial news platform synthesizing in-depth Technology and Business reporting from global and leading Indian publishers into comprehensive intelligence summaries with Google Gemini.",
   keywords: [
     "SIGNAL",
+    "Reuters",
+    "BBC",
+    "TechCrunch",
+    "The Verge",
+    "Economic Times",
+    "Moneycontrol",
+    "NDTV",
+    "Indian Express",
+    "Times of India",
+    "Hindustan Times",
     "The Hindu",
     "Technology News",
     "Business News",
     "AI News Summary",
     "Google Gemini",
-    "RBI",
-    "SEBI",
   ],
   authors: [{ name: "SIGNAL Editorial" }],
   openGraph: {
     title: "SIGNAL — AI Technology & Business Intelligence",
     description:
-      "Editorial news platform synthesizing in-depth Technology and Business reporting from The Hindu into comprehensive intelligence summaries with Google Gemini.",
+      "Editorial news platform synthesizing in-depth Technology and Business reporting from global and leading Indian publishers into comprehensive intelligence summaries with Google Gemini.",
     type: "website",
     siteName: "SIGNAL AI News",
   },
@@ -50,7 +58,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "SIGNAL — AI Technology & Business Intelligence",
     description:
-      "Editorial news platform synthesizing in-depth Technology and Business reporting from The Hindu into comprehensive intelligence summaries with Google Gemini.",
+      "Editorial news platform synthesizing in-depth Technology and Business reporting from global and leading Indian publishers into comprehensive intelligence summaries with Google Gemini.",
   },
 };
 

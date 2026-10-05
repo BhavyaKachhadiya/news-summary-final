@@ -1,6 +1,12 @@
 import { defineConfig } from "vitest/config";
 import path from "path";
 
+try {
+  process.loadEnvFile(".env");
+} catch {
+  // ignore if file missing
+}
+
 export default defineConfig({
   test: {
     environment: "node",

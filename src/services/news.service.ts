@@ -1,10 +1,10 @@
 import pLimit from "p-limit";
 import { connectToDatabase } from "@/lib/mongodb";
 import { Article, ArticleModelFields, ArticleModelDocument } from "@/models/Article";
-import { fetchAllRssFeeds } from "./rss.service";
+import { fetchAllRssFeeds, interleaveArticlesBySource } from "./rss.service";
 import { extractArticleContent } from "./article-extractor.service";
 import { generateArticleSummary } from "./gemini.service";
-import { NewsCategory, APP_CONFIG } from "@/config/feeds";
+import { NewsCategory, APP_CONFIG, CONFIGURED_SOURCE_NAMES } from "@/config/feeds";
 import {
   ArticleDocument,
   NewsListResponse,
@@ -18,6 +18,7 @@ export interface SyncResult {
   newArticlesFound: number;
   summariesCompleted: number;
   summariesFailed: number;
+  expiredArticlesDeleted?: number;
   details: Array<{
     title: string;
     url: string;
@@ -29,10 +30,28 @@ export interface SyncResult {
 
 export interface GetArticlesOptions {
   category?: NewsCategory | "all";
+  source?: string;
   page?: number;
   limit?: number;
   search?: string;
   status?: SummaryStatus;
+}
+
+/**
+ * Returns the list of all available sources dynamically combining configured sources and DB distinct sources.
+ */
+export async function getAvailableSources(): Promise<string[]> {
+  try {
+    await connectToDatabase();
+    const dbSources = await Article.distinct("source");
+    const merged = new Set<string>([...CONFIGURED_SOURCE_NAMES, ...dbSources]);
+    return Array.from(merged)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [...CONFIGURED_SOURCE_NAMES];
+  }
 }
 
 /**
@@ -63,6 +82,7 @@ function serializeArticle(
     title: typeof d.title === "string" ? d.title : "",
     description: typeof d.description === "string" ? d.description : "",
     content: typeof d.content === "string" ? d.content : "",
+    imageUrl: typeof d.imageUrl === "string" ? d.imageUrl : null,
     category: (d.category as NewsCategory) || "technology",
     author: typeof d.author === "string" ? d.author : "The Hindu",
     publishedAt:
@@ -137,6 +157,32 @@ export async function recoverStaleProcessingJobs(): Promise<number> {
 }
 
 /**
+ * Deletes articles from MongoDB whose published date OR created date is older than retention period (default 3 days).
+ */
+export async function deleteExpiredArticles(
+  retentionDays: number = APP_CONFIG.articleRetentionDays
+): Promise<number> {
+  await connectToDatabase();
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+
+  const res = await Article.deleteMany({
+    $or: [
+      { publishedAt: { $lt: cutoff } },
+      { createdAt: { $lt: cutoff } },
+    ],
+  });
+
+  if (res.deletedCount > 0) {
+    logger.info(
+      "NewsService",
+      `Cleaned up ${res.deletedCount} expired articles older than ${retentionDays} days (cutoff: ${cutoff.toISOString()}).`
+    );
+  }
+
+  return res.deletedCount;
+}
+
+/**
  * Orchestrates full RSS synchronization with concurrent extraction and deduplication.
  */
 export async function syncNews(): Promise<SyncResult> {
@@ -146,6 +192,9 @@ export async function syncNews(): Promise<SyncResult> {
   // Recover any stale processing jobs before starting sync
   await recoverStaleProcessingJobs();
 
+  // Purge any articles older than 3 days from MongoDB
+  const expiredDeleted = await deleteExpiredArticles();
+
   const feeds = await fetchAllRssFeeds();
   const allRssArticles = [...feeds.technology, ...feeds.business];
 
@@ -154,6 +203,7 @@ export async function syncNews(): Promise<SyncResult> {
     newArticlesFound: 0,
     summariesCompleted: 0,
     summariesFailed: 0,
+    expiredArticlesDeleted: expiredDeleted,
     details: [],
   };
 
@@ -188,13 +238,14 @@ export async function syncNews(): Promise<SyncResult> {
         const extracted = await extractArticleContent(rssItem.url, rssItem.description);
 
         // Atomic upsert by sourceUrl to eliminate race conditions
-        const articleData: ArticleModelFields = {
+        const articleData: Partial<ArticleModelFields> = {
           source: rssItem.source || "The Hindu",
           sourceUrl: rssItem.url,
           guid: rssItem.guid,
           title: rssItem.title,
           description: rssItem.description,
           content: extracted.content,
+          imageUrl: rssItem.imageUrl || null,
           category: rssItem.category,
           author: rssItem.author || rssItem.source || "The Hindu",
           publishedAt: rssItem.publishedAt,
@@ -205,14 +256,12 @@ export async function syncNews(): Promise<SyncResult> {
           retryCount: 0,
           summary: null,
           summaryError: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
         };
 
         await Article.findOneAndUpdate(
           { sourceUrl: rssItem.url },
           { $setOnInsert: articleData },
-          { upsert: true, new: true }
+          { upsert: true, returnDocument: "after" }
         );
 
         result.details.push({
@@ -238,19 +287,21 @@ export async function syncNews(): Promise<SyncResult> {
 
 export interface TypedArticleQuery {
   category?: NewsCategory;
+  source?: string | RegExp;
   summaryStatus?: SummaryStatus | { $in: string[] };
   $or?: Array<Record<string, unknown>>;
   _id?: unknown;
 }
 
 /**
- * Retrieves paginated articles with optional category and search filters.
+ * Retrieves paginated articles with optional category, source, and search filters.
  */
 export async function getArticles(options: GetArticlesOptions = {}): Promise<NewsListResponse> {
   await connectToDatabase();
 
   const {
     category = "all",
+    source,
     page = 1,
     limit = APP_CONFIG.itemsPerPage,
     search = "",
@@ -261,6 +312,11 @@ export async function getArticles(options: GetArticlesOptions = {}): Promise<New
 
   if (category && category !== "all") {
     query.category = category;
+  }
+
+  if (source && source.trim() && source.trim().toLowerCase() !== "all") {
+    // Exact case-insensitive match for the selected source
+    query.source = new RegExp(`^${escapeRegex(source.trim())}$`, "i");
   }
 
   if (status) {
@@ -287,6 +343,39 @@ export async function getArticles(options: GetArticlesOptions = {}): Promise<New
   // Typecast query safely through unknown to Mongoose find filter
   const filterArg = query as unknown as Parameters<typeof Article.find>[0];
 
+  const availableSources = await getAvailableSources();
+
+  // When querying without search text (e.g. main/category/source feeds), apply round-robin source diversity.
+  // We retrieve matching articles sorted by publishedAt, interleave them across sources, then slice by page.
+  if (!search.trim()) {
+    const [allMatchingDocs, total] = await Promise.all([
+      Article.find(filterArg)
+        .sort({ publishedAt: -1 })
+        .lean(),
+      Article.countDocuments(filterArg),
+    ]);
+
+    const serializedAll = allMatchingDocs.map((d) =>
+      serializeArticle(d as ArticleModelFields & { _id: unknown })
+    );
+
+    const diversified = interleaveArticlesBySource(serializedAll);
+    const paginatedArticles = diversified.slice(skip, skip + safeLimit);
+    const totalPages = Math.ceil(total / safeLimit) || 1;
+
+    return {
+      articles: paginatedArticles,
+      total,
+      page: safePage,
+      limit: safeLimit,
+      totalPages,
+      category,
+      source: source || "all",
+      sources: availableSources,
+    };
+  }
+
+  // When performing specific keyword searches, preserve standard relevance/chronological pagination
   const [docs, total] = await Promise.all([
     Article.find(filterArg)
       .sort({ publishedAt: -1 })
@@ -306,6 +395,8 @@ export async function getArticles(options: GetArticlesOptions = {}): Promise<New
     limit: safeLimit,
     totalPages,
     category,
+    source: source || "all",
+    sources: availableSources,
   };
 }
 
@@ -398,7 +489,7 @@ export async function summarizeArticleById(
   const lockedDoc = (await Article.findOneAndUpdate(
     lockQuery,
     lockUpdate,
-    { new: true }
+    { returnDocument: "after" }
   )) as ArticleModelDocument | null;
 
   // If another request grabbed the lock first, wait/return current article
@@ -443,7 +534,7 @@ export async function summarizeArticleById(
             summaryError: null,
           },
         },
-        { new: true }
+        { returnDocument: "after" }
       );
 
       return {
@@ -460,7 +551,7 @@ export async function summarizeArticleById(
             summaryError: errMessage,
           },
         },
-        { new: true }
+        { returnDocument: "after" }
       );
 
       return {
@@ -479,7 +570,7 @@ export async function summarizeArticleById(
           summaryError: errMsg,
         },
       },
-      { new: true }
+      { returnDocument: "after" }
     );
 
     return {
@@ -522,7 +613,7 @@ export async function retryFailedSummaries(): Promise<{ retried: number; succeed
 export async function getNewsStats(): Promise<NewsStats> {
   await connectToDatabase();
 
-  const [total, techCount, bizCount, completed, pending, processing, failed, latestArticle] =
+  const [total, techCount, bizCount, completed, pending, processing, failed, latestArticle, sources] =
     await Promise.all([
       Article.countDocuments(),
       Article.countDocuments({ category: "technology" }),
@@ -532,6 +623,7 @@ export async function getNewsStats(): Promise<NewsStats> {
       Article.countDocuments({ summaryStatus: "processing" }),
       Article.countDocuments({ summaryStatus: "failed" }),
       Article.findOne({}, { fetchedAt: 1 }).sort({ fetchedAt: -1 }).lean(),
+      getAvailableSources(),
     ]);
 
   return {
@@ -546,6 +638,7 @@ export async function getNewsStats(): Promise<NewsStats> {
       processing,
       failed,
     },
+    sources,
     lastSyncedAt: latestArticle?.fetchedAt
       ? new Date(latestArticle.fetchedAt).toISOString()
       : null,
