@@ -4,7 +4,6 @@ import { notFound } from "next/navigation";
 import { getArticleById } from "@/services/news.service";
 import { SummaryView } from "@/components/SummaryView";
 import Link from "next/link";
-import { ChevronLeft } from "lucide-react";
 
 export const dynamic = "force-dynamic";
 

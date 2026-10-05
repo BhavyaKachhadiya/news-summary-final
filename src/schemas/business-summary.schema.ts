@@ -29,9 +29,7 @@ export const BusinessSummarySchema = z.object({
   risks_and_uncertainties: z.array(z.string()).default([]),
   future_developments: z.array(z.string()).default([]),
   key_takeaways: z.array(z.string()).default([]),
-  category: z
-    .string()
-    .transform((val) => "Business" as const),
+  category: z.literal("Business"),
 });
 
 export type BusinessSummaryOutput = z.infer<typeof BusinessSummarySchema>;

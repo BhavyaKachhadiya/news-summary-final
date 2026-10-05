@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getArticles } from "@/services/news.service";
-import { NewsCategory } from "@/config/feeds";
-import { SummaryStatus } from "@/types/news";
+import { PaginationQuerySchema } from "@/lib/validation/api.schema";
+import { logger } from "@/lib/logging/logger";
 
 export const dynamic = "force-dynamic";
 
@@ -9,20 +9,24 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
 
-    const categoryParam = searchParams.get("category");
-    const category =
-      categoryParam === "technology" || categoryParam === "business"
-        ? (categoryParam as NewsCategory)
-        : "all";
+    const queryParams = {
+      page: searchParams.get("page") ?? undefined,
+      limit: searchParams.get("limit") ?? undefined,
+      category: searchParams.get("category") ?? undefined,
+      search: searchParams.get("search") ?? undefined,
+      status: searchParams.get("status") ?? undefined,
+    };
 
-    const page = parseInt(searchParams.get("page") || "1", 10);
-    const limit = parseInt(searchParams.get("limit") || "12", 10);
-    const search = searchParams.get("search") || "";
-    const statusParam = searchParams.get("status");
-    const status =
-      statusParam && ["pending", "processing", "completed", "failed"].includes(statusParam)
-        ? (statusParam as SummaryStatus)
-        : undefined;
+    const parsed = PaginationQuerySchema.safeParse(queryParams);
+
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid query parameters", details: parsed.error.issues },
+        { status: 400 }
+      );
+    }
+
+    const { page, limit, category, search, status } = parsed.data;
 
     const data = await getArticles({
       category,
@@ -35,7 +39,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(data);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal Server Error";
-    console.error("[API /api/news] Error:", error);
+    logger.error("NewsAPI", "Error fetching articles", error);
     return NextResponse.json(
       { error: "Failed to fetch articles", details: message },
       { status: 500 }

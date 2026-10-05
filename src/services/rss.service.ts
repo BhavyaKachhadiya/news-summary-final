@@ -1,6 +1,7 @@
 import Parser from "rss-parser";
 import { NewsCategory, FeedConfig, RSS_FEED_CONFIGS, APP_CONFIG } from "@/config/feeds";
 import { RssArticle } from "@/types/news";
+import { logger } from "@/lib/logging/logger";
 
 interface CustomFeedItem {
   title?: string;
@@ -64,14 +65,15 @@ export function normalizeUrl(rawUrl: string): string {
 
 /**
  * Fetches and parses RSS articles for a specific feed configuration.
+ * Gracefully handles malformed feeds or unavailable websites without throwing.
  */
 export async function fetchFeedArticles(feedConfig: FeedConfig): Promise<RssArticle[]> {
-  console.log(`[RSS] Fetching [${feedConfig.sourceName}] ${feedConfig.category} feed from: ${feedConfig.url}`);
+  logger.info("RSS", `Fetching [${feedConfig.sourceName}] ${feedConfig.category} feed from: ${feedConfig.url}`);
 
   try {
     const feed = await parser.parseURL(feedConfig.url);
     const items = feed.items || [];
-    console.log(`[RSS] Fetched ${items.length} raw items from ${feedConfig.sourceName} (${feedConfig.category})`);
+    logger.info("RSS", `Fetched ${items.length} raw items from ${feedConfig.sourceName} (${feedConfig.category})`);
 
     const seenUrls = new Set<string>();
     const articles: RssArticle[] = [];
@@ -118,10 +120,10 @@ export async function fetchFeedArticles(feedConfig: FeedConfig): Promise<RssArti
       });
     }
 
-    console.log(`[RSS] Extracted ${articles.length} valid unique articles from ${feedConfig.sourceName} (${feedConfig.category})`);
+    logger.info("RSS", `Extracted ${articles.length} valid unique articles from ${feedConfig.sourceName} (${feedConfig.category})`);
     return articles;
-  } catch (err) {
-    console.error(`[RSS] Error fetching feed from ${feedConfig.sourceName} (${feedConfig.url}):`, err);
+  } catch (err: unknown) {
+    logger.error("RSS", `Error fetching feed from ${feedConfig.sourceName} (${feedConfig.url})`, err);
     return [];
   }
 }
@@ -179,7 +181,7 @@ export async function fetchAllRssFeeds(): Promise<Record<NewsCategory, RssArticl
         }
       }
     } else {
-      console.error("[RSS] Feed fetch failed:", res.reason);
+      logger.error("RSS", "Feed fetch failed", res.reason);
     }
   }
 

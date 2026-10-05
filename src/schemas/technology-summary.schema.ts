@@ -25,9 +25,7 @@ export const TechnologySummarySchema = z.object({
   impact: z.string().default(""),
   future_developments: z.array(z.string()).default([]),
   key_takeaways: z.array(z.string()).default([]),
-  category: z
-    .string()
-    .transform((val) => "Technology" as const),
+  category: z.literal("Technology"),
 });
 
 export type TechnologySummaryOutput = z.infer<typeof TechnologySummarySchema>;

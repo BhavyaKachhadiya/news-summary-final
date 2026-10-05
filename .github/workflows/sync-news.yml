@@ -2,10 +2,13 @@ name: Sync News RSS Feeds
 
 on:
   schedule:
-    # Runs at 7:00 AM, 3:00 PM, and 9:00 PM IST (UTC+5:30)
-    # Equivalent to 01:30, 09:30, and 15:30 UTC
-    - cron: '30 1,9,15 * * *'
+    # Runs every 1 hour at minute 0
+    - cron: '0 * * * *'
   workflow_dispatch: # Allows manual trigger from GitHub Actions dashboard
+
+concurrency:
+  group: sync-news-feeds
+  cancel-in-progress: false # Prevent overlapping sync jobs
 
 jobs:
   sync-feeds:
@@ -25,20 +28,19 @@ jobs:
             exit 1
           fi
 
-          # Strip trailing slash if present
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET secret is not set in GitHub repository secrets."
+            echo "Please navigate to Settings > Secrets and variables > Actions, and add CRON_SECRET matching your production app environment."
+            exit 1
+          fi
+
           CLEAN_APP_URL="${APP_URL%/}"
           ENDPOINT="$CLEAN_APP_URL/api/news/sync"
 
-          echo "Triggering RSS sync at: $ENDPOINT"
-
-          AUTH_HEADER=""
-          if [ -n "$CRON_SECRET" ]; then
-            echo "Using configured CRON_SECRET for authentication."
-            AUTH_HEADER="Authorization: Bearer $CRON_SECRET"
-          fi
+          echo "Triggering RSS sync at: $ENDPOINT (hourly schedule)"
 
           HTTP_RESPONSE=$(curl -s -S -w "\nHTTP_STATUS:%{http_code}" -X POST "$ENDPOINT" \
-            ${AUTH_HEADER:+-H "$AUTH_HEADER"} \
+            -H "Authorization: Bearer $CRON_SECRET" \
             -H "Content-Type: application/json" \
             --connect-timeout 30 \
             --max-time 180)

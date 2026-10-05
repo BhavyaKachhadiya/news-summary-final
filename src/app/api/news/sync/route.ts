@@ -1,14 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { syncNews, retryFailedSummaries } from "@/services/news.service";
 import { env } from "@/lib/env";
+import { logger } from "@/lib/logging/logger";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Allow sufficient time for RSS ingestion and AI summarization
 
 export async function POST(request: NextRequest) {
   try {
-    // Check CRON_SECRET if configured
     const configuredSecret = env.CRON_SECRET;
+
+    // Never allow unauthenticated production sync
+    if (env.isProduction && !configuredSecret) {
+      logger.error("SyncAPI", "CRON_SECRET must be configured in production environment.");
+      return NextResponse.json(
+        { error: "Server misconfiguration: CRON_SECRET is required in production." },
+        { status: 500 }
+      );
+    }
+
     if (configuredSecret) {
       const authHeader = request.headers.get("authorization");
       const cronSecretHeader = request.headers.get("x-cron-secret");
@@ -17,12 +27,18 @@ export async function POST(request: NextRequest) {
         : null;
 
       const providedSecret = bearerToken || cronSecretHeader;
-      if (providedSecret !== configuredSecret) {
+      if (!providedSecret || providedSecret !== configuredSecret) {
+        logger.warn("SyncAPI", "Unauthorized sync attempt: missing or invalid CRON_SECRET.");
         return NextResponse.json(
           { error: "Unauthorized: Invalid or missing CRON_SECRET." },
           { status: 401 }
         );
       }
+    } else if (env.isProduction) {
+      return NextResponse.json(
+        { error: "Unauthorized: CRON_SECRET required in production." },
+        { status: 401 }
+      );
     }
 
     const { searchParams } = new URL(request.url);
@@ -43,7 +59,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Internal Server Error";
-    console.error("[API /api/news/sync] Error during sync:", error);
+    logger.error("SyncAPI", "Error during sync", error);
     return NextResponse.json(
       { error: "Failed to synchronize news", details: message },
       { status: 500 }

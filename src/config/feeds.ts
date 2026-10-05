@@ -61,6 +61,11 @@ export const APP_CONFIG = {
   itemsPerPage: 12,
   articleExtractionTimeoutMs: 10000,
   rssFetchTimeoutMs: 15000,
+  maxConcurrentExtraction: 5,
+  maxArticleHtmlSizeBytes: 2 * 1024 * 1024, // 2MB max response HTML size
+  maxExtractedTextLength: 20000, // 20,000 characters maximum extracted text
+  maxGeminiInputLength: 15000, // 15,000 characters untrusted content into Gemini
+  staleProcessingTimeoutMs: 5 * 60 * 1000, // 5 minutes processing lock expiry
   maxConcurrentGeminiRequests: 3,
   geminiMaxRetries: 3,
   geminiInitialBackoffMs: 2000,

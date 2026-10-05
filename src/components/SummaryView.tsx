@@ -94,7 +94,7 @@ export function SummaryView({ article }: SummaryViewProps) {
   const summary = currentArticle.summary;
   const isSummaryReady = Boolean(summary && currentArticle.summaryStatus === "completed");
 
-  const handleGenerateSummary = async (force: boolean = false) => {
+  const handleGenerateSummary = React.useCallback(async (force: boolean = false) => {
     try {
       setIsSummarizing(true);
       setErrorMsg(null);
@@ -134,7 +134,7 @@ export function SummaryView({ article }: SummaryViewProps) {
     } finally {
       setIsSummarizing(false);
     }
-  };
+  }, [currentArticle._id]);
 
   // Automatically trigger summarization on-demand when user opens an unsummarized article
   useEffect(() => {
@@ -146,7 +146,7 @@ export function SummaryView({ article }: SummaryViewProps) {
       hasTriggeredRef.current = true;
       handleGenerateSummary(false);
     }
-  }, [currentArticle._id, currentArticle.summary, currentArticle.summaryStatus]);
+  }, [currentArticle.summary, currentArticle.summaryStatus, handleGenerateSummary]);
 
   const techSummary = isTech ? (summary as TechnologySummary) : null;
   const bizSummary = !isTech ? (summary as BusinessSummary) : null;

@@ -5,6 +5,7 @@ import { env } from "@/lib/env";
 import { getSummaryPrompt } from "@/prompts";
 import { validateSummary } from "@/schemas";
 import { ArticleSummary } from "@/types/news";
+import { logger } from "@/lib/logging/logger";
 
 export interface GeminiSummaryRequest {
   title: string;
@@ -18,6 +19,7 @@ export interface GeminiSummaryResult {
   summary?: ArticleSummary;
   error?: string;
   modelUsed?: string;
+  latencyMs?: number;
 }
 
 // Concurrency limiter to prevent flooding the Gemini API
@@ -39,43 +41,67 @@ function getGenAI(): GoogleGenAI {
 }
 
 /**
- * Strips potential markdown code blocks, backticks, or trailing characters from Gemini response.
+ * Sanitizes scraped article content to prevent prompt injection and limit token footprint.
+ * Enforces boundary tags to clearly demarcate untrusted content for the model.
+ */
+export function sanitizePromptInput(rawContent: string): string {
+  if (!rawContent) return "";
+
+  let sanitized = rawContent.slice(0, APP_CONFIG.maxGeminiInputLength);
+
+  // Neutralize common prompt injection directives
+  sanitized = sanitized
+    .replace(/ignore (all )?previous instructions/gi, "[filtered instruction]")
+    .replace(/disregard (all )?prior instructions/gi, "[filtered instruction]")
+    .replace(/system prompt/gi, "[system context]")
+    .replace(/assistant:/gi, "assistant context:")
+    .replace(/user:/gi, "user context:");
+
+  return sanitized.trim();
+}
+
+/**
+ * Strips markdown fences, trailing text, or leading noise from Gemini response.
+ * Handles malformed JSON recovery by extracting outermost matched braces.
  */
 export function cleanJsonResponse(rawText: string): string {
   let cleaned = rawText.trim();
 
-  // Strip leading code fences
+  // Strip leading markdown fences
   if (cleaned.startsWith("```json")) {
     cleaned = cleaned.slice(7);
   } else if (cleaned.startsWith("```")) {
     cleaned = cleaned.slice(3);
   }
 
-  // Strip trailing code fences
+  // Strip trailing markdown fences
   if (cleaned.endsWith("```")) {
     cleaned = cleaned.slice(0, -3);
   }
 
   cleaned = cleaned.trim();
 
-  // Find first { and last } to remove any leading/trailing explanatory notes
+  // Extract from first '{' to last '}'
   const firstBrace = cleaned.indexOf("{");
   const lastBrace = cleaned.lastIndexOf("}");
 
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace >= firstBrace) {
     cleaned = cleaned.substring(firstBrace, lastBrace + 1);
   }
+
+  // Common JSON repair: replace trailing commas before } or ]
+  cleaned = cleaned.replace(/,\s*([}\]])/g, "$1");
 
   return cleaned;
 }
 
 /**
- * Delays execution for exponential backoff
+ * Delays execution with exponential backoff and jitter
  */
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Calls Gemini with automatic retries and exponential backoff on 429/5xx errors
+ * Calls Gemini with automatic retries, jittered exponential backoff, and 429/500/503/quota handling
  */
 async function callGeminiWithRetry(prompt: string, modelName: string): Promise<string> {
   const ai = getGenAI();
@@ -84,8 +110,9 @@ async function callGeminiWithRetry(prompt: string, modelName: string): Promise<s
 
   for (let attempt = 1; attempt <= APP_CONFIG.geminiMaxRetries; attempt++) {
     try {
-      console.log(
-        `[Gemini] Generating summary with model ${modelName} (attempt ${attempt}/${APP_CONFIG.geminiMaxRetries})`
+      logger.info(
+        "Gemini",
+        `Calling Gemini model ${modelName} (attempt ${attempt}/${APP_CONFIG.geminiMaxRetries})`
       );
 
       const response = await ai.models.generateContent({
@@ -106,7 +133,7 @@ async function callGeminiWithRetry(prompt: string, modelName: string): Promise<s
     } catch (err: unknown) {
       lastError = err;
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.warn(`[Gemini] Attempt ${attempt} failed: ${errMsg}`);
+      logger.warn("Gemini", `Attempt ${attempt} failed: ${errMsg}`);
 
       const isRateLimit =
         errMsg.includes("429") ||
@@ -116,16 +143,18 @@ async function callGeminiWithRetry(prompt: string, modelName: string): Promise<s
       const isServerTransient =
         errMsg.includes("503") ||
         errMsg.includes("500") ||
-        errMsg.toLowerCase().includes("overloaded");
+        errMsg.toLowerCase().includes("overloaded") ||
+        errMsg.toLowerCase().includes("unavailable");
 
       if ((isRateLimit || isServerTransient) && attempt < APP_CONFIG.geminiMaxRetries) {
-        console.log(`[Gemini] Backing off for ${delay}ms before retrying...`);
-        await sleep(delay);
+        // Add jitter: ±20%
+        const jitter = delay * (0.8 + Math.random() * 0.4);
+        logger.info("Gemini", `Backing off for ${Math.round(jitter)}ms before retrying...`);
+        await sleep(jitter);
         delay *= 2;
         continue;
       }
 
-      // Non-transient errors or max attempts reached
       break;
     }
   }
@@ -141,10 +170,14 @@ export async function generateArticleSummary(
   request: GeminiSummaryRequest
 ): Promise<GeminiSummaryResult> {
   return queue(async () => {
+    const startTime = Date.now();
     try {
+      const sanitizedContent = sanitizePromptInput(request.content);
+
+      // Wrap untrusted content safely with boundaries
       const prompt = getSummaryPrompt(request.category, {
         title: request.title,
-        content: request.content,
+        content: `--- UNTRUSTED ARTICLE CONTENT BEGIN ---\n${sanitizedContent}\n--- UNTRUSTED ARTICLE CONTENT END ---`,
         url: request.url,
       });
 
@@ -157,40 +190,50 @@ export async function generateArticleSummary(
       try {
         parsed = JSON.parse(cleanedJson);
       } catch (jsonErr) {
-        console.error("[Gemini] Failed to parse JSON response:", cleanedJson);
+        logger.error("Gemini", "Failed to parse JSON response", {
+          error: jsonErr instanceof Error ? jsonErr.message : String(jsonErr),
+        });
         return {
           success: false,
           error: `Malformed JSON from Gemini: ${jsonErr instanceof Error ? jsonErr.message : String(jsonErr)}`,
           modelUsed: modelName,
+          latencyMs: Date.now() - startTime,
         };
       }
 
       // Validate against the category Zod schema
       const validation = validateSummary(request.category, parsed);
       if (!validation.success) {
-        console.error(
-          `[Gemini] Schema validation failed for ${request.category}:`,
-          validation.error
-        );
+        logger.error("Gemini", `Schema validation failed for ${request.category}`, {
+          error: validation.error,
+        });
         return {
           success: false,
           error: `Summary validation error: ${validation.error}`,
           modelUsed: modelName,
+          latencyMs: Date.now() - startTime,
         };
       }
 
-      console.log(`[Gemini] Summary successfully generated & validated for: ${request.title}`);
+      const latency = Date.now() - startTime;
+      logger.info(
+        "Gemini",
+        `Summary successfully generated & validated for: ${request.title} in ${latency}ms`
+      );
+
       return {
         success: true,
         summary: validation.data,
         modelUsed: modelName,
+        latencyMs: latency,
       };
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      console.error("[Gemini] Error generating summary:", errMsg);
+      logger.error("Gemini", "Error generating summary", { error: errMsg });
       return {
         success: false,
         error: errMsg,
+        latencyMs: Date.now() - startTime,
       };
     }
   });

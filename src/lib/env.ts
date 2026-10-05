@@ -1,25 +1,35 @@
-export function getEnv(key: string, defaultValue?: string): string {
-  const value = process.env[key] ?? defaultValue;
-  if (value === undefined) {
-    throw new Error(`Environment variable ${key} is required but was not provided.`);
-  }
-  return value;
-}
+import { z } from "zod";
+
+const envSchema = z.object({
+  MONGODB_URI: z.string().default("mongodb://localhost:27017/ai-news"),
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  CRON_SECRET: z.string().optional(),
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+});
+
+const parsedEnv = envSchema.parse({
+  MONGODB_URI: process.env.MONGODB_URI,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  GEMINI_MODEL: process.env.GEMINI_MODEL,
+  CRON_SECRET: process.env.CRON_SECRET,
+  NODE_ENV: process.env.NODE_ENV,
+});
 
 export const env = {
   get MONGODB_URI(): string {
-    return process.env.MONGODB_URI || "mongodb://localhost:27017/ai-news";
+    return parsedEnv.MONGODB_URI;
   },
   get GEMINI_API_KEY(): string | undefined {
-    return process.env.GEMINI_API_KEY;
+    return parsedEnv.GEMINI_API_KEY;
   },
   get GEMINI_MODEL(): string {
-    return process.env.GEMINI_MODEL || "gemini-2.5-flash";
+    return parsedEnv.GEMINI_MODEL;
   },
   get CRON_SECRET(): string | undefined {
-    return process.env.CRON_SECRET;
+    return parsedEnv.CRON_SECRET;
   },
   get isProduction(): boolean {
-    return process.env.NODE_ENV === "production";
+    return parsedEnv.NODE_ENV === "production";
   },
 };

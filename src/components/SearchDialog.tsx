@@ -19,56 +19,67 @@ export function SearchDialog({ isOpen, onClose }: SearchDialogProps) {
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => inputRef.current?.focus(), 50);
-    } else {
-      setQuery("");
-      setResults([]);
     }
   }, [isOpen]);
 
+  const handleClose = () => {
+    setQuery("");
+    setResults([]);
+    setIsLoading(false);
+    onClose();
+  };
+
   useEffect(() => {
-    if (!query.trim()) {
-      setResults([]);
-      setIsLoading(false);
+    const trimmed = query.trim();
+    if (!trimmed) {
       return;
     }
 
+    let isCancelled = false;
     const timer = setTimeout(async () => {
       try {
         setIsLoading(true);
-        const res = await fetch(`/api/news?search=${encodeURIComponent(query.trim())}&limit=8`);
-        if (res.ok) {
+        const res = await fetch(`/api/news?search=${encodeURIComponent(trimmed)}&limit=8`);
+        if (res.ok && !isCancelled) {
           const data = await res.json();
           setResults(data.articles || []);
         }
       } catch (err) {
         console.error("Search failed:", err);
       } finally {
-        setIsLoading(false);
+        if (!isCancelled) {
+          setIsLoading(false);
+        }
       }
     }, 200);
 
-    return () => clearTimeout(timer);
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
   }, [query]);
 
   // Handle escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape" && isOpen) {
-        onClose();
+        handleClose();
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  });
 
   if (!isOpen) return null;
+
+  const displayedResults = query.trim() ? results : [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4 sm:px-6">
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black/85 backdrop-blur-sm transition-opacity"
-        onClick={onClose}
+        onClick={handleClose}
       />
 
       {/* Modal Container */}
@@ -80,13 +91,24 @@ export function SearchDialog({ isOpen, onClose }: SearchDialogProps) {
             ref={inputRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              setQuery(val);
+              if (!val.trim()) {
+                setResults([]);
+                setIsLoading(false);
+              }
+            }}
             placeholder="Search news, companies, people, RBI, AI..."
             className="w-full bg-transparent text-white placeholder-[#555555] text-sm focus:outline-none font-sans"
           />
           {query && (
             <button
-              onClick={() => setQuery("")}
+              onClick={() => {
+                setQuery("");
+                setResults([]);
+                setIsLoading(false);
+              }}
               className="text-[#666666] hover:text-white text-xs font-mono px-2 py-1"
             >
               CLEAR
@@ -105,23 +127,23 @@ export function SearchDialog({ isOpen, onClose }: SearchDialogProps) {
             </div>
           )}
 
-          {!isLoading && query && results.length === 0 && (
+          {!isLoading && query && displayedResults.length === 0 && (
             <div className="p-8 text-center">
               <p className="text-sm text-white font-medium mb-1">NO MATCHING ARTICLES</p>
               <p className="text-xs text-[#666666]">Try searching for other terms or entities.</p>
             </div>
           )}
 
-          {!isLoading && results.length > 0 && (
+          {!isLoading && displayedResults.length > 0 && (
             <div>
               <div className="px-4 py-2 text-[10px] font-mono uppercase text-[#666666] bg-[#000000]">
-                {results.length} RESULTS
+                {displayedResults.length} RESULTS
               </div>
-              {results.map((article) => (
+              {displayedResults.map((article) => (
                 <div
                   key={article._id}
                   onClick={() => {
-                    onClose();
+                    handleClose();
                     router.push(`/article/${article._id}`);
                   }}
                   className="p-4 hover:bg-[#141414] cursor-pointer transition-colors"

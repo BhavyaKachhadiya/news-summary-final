@@ -1,5 +1,6 @@
+import pLimit from "p-limit";
 import { connectToDatabase } from "@/lib/mongodb";
-import { Article, ArticleModelDocument } from "@/models/Article";
+import { Article, ArticleModelFields, ArticleModelDocument } from "@/models/Article";
 import { fetchAllRssFeeds } from "./rss.service";
 import { extractArticleContent } from "./article-extractor.service";
 import { generateArticleSummary } from "./gemini.service";
@@ -10,6 +11,7 @@ import {
   NewsStats,
   SummaryStatus,
 } from "@/types/news";
+import { logger } from "@/lib/logging/logger";
 
 export interface SyncResult {
   totalFeedsFetched: number;
@@ -34,36 +36,115 @@ export interface GetArticlesOptions {
 }
 
 /**
- * Normalizes MongoDB documents into plain JavaScript objects for safe Next.js serialization.
+ * Escapes regex special characters to prevent ReDoS or regex injection attacks.
  */
-function serializeArticle(doc: any): ArticleDocument {
+export function escapeRegex(text: string): string {
+  return text.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+}
+
+/**
+ * Type-safe serialization of Mongoose documents / lean objects into ArticleDocument.
+ */
+function serializeArticle(
+  doc: ArticleModelDocument | (ArticleModelFields & { _id: unknown })
+): ArticleDocument {
+  const d = doc as unknown as Record<string, unknown>;
+  const rawId = d._id;
+  const idStr =
+    typeof rawId === "object" && rawId !== null && "toString" in rawId
+      ? (rawId as { toString(): string }).toString()
+      : String(rawId);
+
   return {
-    _id: doc._id.toString(),
-    source: doc.source || "The Hindu",
-    sourceUrl: doc.sourceUrl,
-    guid: doc.guid || null,
-    title: doc.title,
-    description: doc.description || "",
-    content: doc.content || "",
-    category: doc.category as NewsCategory,
-    author: doc.author || "The Hindu",
-    publishedAt: doc.publishedAt ? new Date(doc.publishedAt).toISOString() : new Date().toISOString(),
-    fetchedAt: doc.fetchedAt ? new Date(doc.fetchedAt).toISOString() : new Date().toISOString(),
-    summarizedAt: doc.summarizedAt ? new Date(doc.summarizedAt).toISOString() : null,
-    summaryStatus: doc.summaryStatus as SummaryStatus,
-    summary: doc.summary || null,
-    summaryError: doc.summaryError || null,
-    createdAt: doc.createdAt ? new Date(doc.createdAt).toISOString() : new Date().toISOString(),
-    updatedAt: doc.updatedAt ? new Date(doc.updatedAt).toISOString() : new Date().toISOString(),
+    _id: idStr,
+    source: typeof d.source === "string" ? d.source : "The Hindu",
+    sourceUrl: typeof d.sourceUrl === "string" ? d.sourceUrl : "",
+    guid: typeof d.guid === "string" ? d.guid : null,
+    title: typeof d.title === "string" ? d.title : "",
+    description: typeof d.description === "string" ? d.description : "",
+    content: typeof d.content === "string" ? d.content : "",
+    category: (d.category as NewsCategory) || "technology",
+    author: typeof d.author === "string" ? d.author : "The Hindu",
+    publishedAt:
+      d.publishedAt instanceof Date
+        ? d.publishedAt.toISOString()
+        : typeof d.publishedAt === "string"
+        ? d.publishedAt
+        : new Date().toISOString(),
+    fetchedAt:
+      d.fetchedAt instanceof Date
+        ? d.fetchedAt.toISOString()
+        : typeof d.fetchedAt === "string"
+        ? d.fetchedAt
+        : new Date().toISOString(),
+    summarizedAt:
+      d.summarizedAt instanceof Date
+        ? d.summarizedAt.toISOString()
+        : typeof d.summarizedAt === "string"
+        ? d.summarizedAt
+        : null,
+    summaryStatus: (d.summaryStatus as SummaryStatus) || "pending",
+    summaryStartedAt:
+      d.summaryStartedAt instanceof Date
+        ? d.summaryStartedAt.toISOString()
+        : typeof d.summaryStartedAt === "string"
+        ? d.summaryStartedAt
+        : null,
+    retryCount: typeof d.retryCount === "number" ? d.retryCount : 0,
+    summary: (d.summary as ArticleDocument["summary"]) || null,
+    summaryError: typeof d.summaryError === "string" ? d.summaryError : null,
+    createdAt:
+      d.createdAt instanceof Date
+        ? d.createdAt.toISOString()
+        : typeof d.createdAt === "string"
+        ? d.createdAt
+        : new Date().toISOString(),
+    updatedAt:
+      d.updatedAt instanceof Date
+        ? d.updatedAt.toISOString()
+        : typeof d.updatedAt === "string"
+        ? d.updatedAt
+        : new Date().toISOString(),
   };
 }
 
 /**
- * Orchestrates full RSS synchronization, article scraping, and Gemini summarization.
+ * Recovers articles stuck in 'processing' state past staleProcessingTimeoutMs.
+ */
+export async function recoverStaleProcessingJobs(): Promise<number> {
+  await connectToDatabase();
+  const cutoff = new Date(Date.now() - APP_CONFIG.staleProcessingTimeoutMs);
+
+  const res = await Article.updateMany(
+    {
+      summaryStatus: "processing",
+      summaryStartedAt: { $lt: cutoff },
+    },
+    {
+      $set: {
+        summaryStatus: "pending",
+        summaryError: "Processing timed out or crashed; automatically reset to pending.",
+        summaryStartedAt: null,
+      },
+    }
+  );
+
+  if (res.modifiedCount > 0) {
+    logger.warn("NewsService", `Reset ${res.modifiedCount} stale processing jobs back to pending.`);
+  }
+
+  return res.modifiedCount;
+}
+
+/**
+ * Orchestrates full RSS synchronization with concurrent extraction and deduplication.
  */
 export async function syncNews(): Promise<SyncResult> {
   await connectToDatabase();
-  console.log("[News Service] Starting RSS synchronization...");
+  logger.info("NewsService", "Starting RSS synchronization...");
+
+  // Recover any stale processing jobs before starting sync
+  await recoverStaleProcessingJobs();
 
   const feeds = await fetchAllRssFeeds();
   const allRssArticles = [...feeds.technology, ...feeds.business];
@@ -77,7 +158,7 @@ export async function syncNews(): Promise<SyncResult> {
   };
 
   if (allRssArticles.length === 0) {
-    console.warn("[News Service] No articles retrieved from RSS feeds.");
+    logger.warn("NewsService", "No articles retrieved from RSS feeds.");
     return result;
   }
 
@@ -91,49 +172,75 @@ export async function syncNews(): Promise<SyncResult> {
   const existingUrlSet = new Set(existingArticles.map((a) => a.sourceUrl));
   const newRssArticles = allRssArticles.filter((a) => !existingUrlSet.has(a.url));
 
-  console.log(
-    `[News Service] Total fetched: ${allRssArticles.length}, New articles to insert: ${newRssArticles.length}`
+  logger.info(
+    "NewsService",
+    `Total fetched: ${allRssArticles.length}, New articles to insert: ${newRssArticles.length}`
   );
   result.newArticlesFound = newRssArticles.length;
 
-  // 2. Extract content and save each new article in 'pending' status.
-  // We do NOT call Gemini during RSS sync; summaries are generated on-demand when a user views an article.
-  for (const rssItem of newRssArticles) {
-    try {
-      console.log(`[News Service] Ingesting & extracting content for: ${rssItem.title}`);
-      const extracted = await extractArticleContent(rssItem.url, rssItem.description);
+  // 2. Concurrently extract content using p-limit
+  const extractionQueue = pLimit(APP_CONFIG.maxConcurrentExtraction);
 
-      await Article.create({
-        source: rssItem.source || "The Hindu",
-        sourceUrl: rssItem.url,
-        guid: rssItem.guid,
-        title: rssItem.title,
-        description: rssItem.description,
-        content: extracted.content,
-        category: rssItem.category,
-        author: rssItem.author || rssItem.source || "The Hindu",
-        publishedAt: rssItem.publishedAt,
-        fetchedAt: new Date(),
-        summaryStatus: "pending",
-        summary: null,
-      });
+  const extractionPromises = newRssArticles.map((rssItem) =>
+    extractionQueue(async () => {
+      try {
+        logger.info("NewsService", `Ingesting & extracting: ${rssItem.title}`);
+        const extracted = await extractArticleContent(rssItem.url, rssItem.description);
 
-      result.details.push({
-        title: rssItem.title,
-        url: rssItem.url,
-        category: rssItem.category,
-        status: "pending",
-      });
-    } catch (createErr: unknown) {
-      // Handle rare race conditions if duplicate was inserted concurrently
-      console.error(`[News Service] Failed to save article ${rssItem.url}:`, createErr);
-    }
-  }
+        // Atomic upsert by sourceUrl to eliminate race conditions
+        const articleData: ArticleModelFields = {
+          source: rssItem.source || "The Hindu",
+          sourceUrl: rssItem.url,
+          guid: rssItem.guid,
+          title: rssItem.title,
+          description: rssItem.description,
+          content: extracted.content,
+          category: rssItem.category,
+          author: rssItem.author || rssItem.source || "The Hindu",
+          publishedAt: rssItem.publishedAt,
+          fetchedAt: new Date(),
+          summarizedAt: null,
+          summaryStatus: "pending",
+          summaryStartedAt: null,
+          retryCount: 0,
+          summary: null,
+          summaryError: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
 
-  console.log(
-    `[News Service] Sync completed. Ingested ${result.newArticlesFound} new articles (pending on-demand summary).`
+        await Article.findOneAndUpdate(
+          { sourceUrl: rssItem.url },
+          { $setOnInsert: articleData },
+          { upsert: true, new: true }
+        );
+
+        result.details.push({
+          title: rssItem.title,
+          url: rssItem.url,
+          category: rssItem.category,
+          status: "pending",
+        });
+      } catch (createErr: unknown) {
+        logger.error("NewsService", `Failed to save article ${rssItem.url}`, createErr);
+      }
+    })
+  );
+
+  await Promise.allSettled(extractionPromises);
+
+  logger.info(
+    "NewsService",
+    `Sync completed. Ingested ${result.newArticlesFound} new articles (pending on-demand summary).`
   );
   return result;
+}
+
+export interface TypedArticleQuery {
+  category?: NewsCategory;
+  summaryStatus?: SummaryStatus | { $in: string[] };
+  $or?: Array<Record<string, unknown>>;
+  _id?: unknown;
 }
 
 /**
@@ -150,7 +257,7 @@ export async function getArticles(options: GetArticlesOptions = {}): Promise<New
     status,
   } = options;
 
-  const query: Record<string, any> = {};
+  const query: TypedArticleQuery = {};
 
   if (category && category !== "all") {
     query.category = category;
@@ -161,7 +268,8 @@ export async function getArticles(options: GetArticlesOptions = {}): Promise<New
   }
 
   if (search.trim()) {
-    const searchRegex = new RegExp(search.trim(), "i");
+    const escaped = escapeRegex(search.trim());
+    const searchRegex = new RegExp(escaped, "i");
     query.$or = [
       { title: searchRegex },
       { description: searchRegex },
@@ -173,19 +281,22 @@ export async function getArticles(options: GetArticlesOptions = {}): Promise<New
   }
 
   const safePage = Math.max(1, page);
-  const safeLimit = Math.min(50, Math.max(1, limit));
+  const safeLimit = Math.min(100, Math.max(1, limit));
   const skip = (safePage - 1) * safeLimit;
 
+  // Typecast query safely through unknown to Mongoose find filter
+  const filterArg = query as unknown as Parameters<typeof Article.find>[0];
+
   const [docs, total] = await Promise.all([
-    Article.find(query)
+    Article.find(filterArg)
       .sort({ publishedAt: -1 })
       .skip(skip)
       .limit(safeLimit)
       .lean(),
-    Article.countDocuments(query),
+    Article.countDocuments(filterArg),
   ]);
 
-  const articles = docs.map(serializeArticle);
+  const articles = docs.map((d) => serializeArticle(d as ArticleModelFields & { _id: unknown }));
   const totalPages = Math.ceil(total / safeLimit) || 1;
 
   return {
@@ -209,14 +320,25 @@ export async function getArticleById(id: string): Promise<ArticleDocument | null
     if (!doc) {
       return null;
     }
-    return serializeArticle(doc);
+    return serializeArticle(doc as ArticleModelFields & { _id: unknown });
   } catch {
     return null;
   }
 }
 
 /**
+ * Deletes a single article by MongoDB ID (Admin functionality).
+ */
+export async function deleteArticleById(id: string): Promise<boolean> {
+  await connectToDatabase();
+  const res = await Article.findByIdAndDelete(id);
+  return !!res;
+}
+
+/**
  * Summarizes or retries summarization for a specific article.
+ * Uses atomic MongoDB status transitions to guarantee that 2 simultaneous requests
+ * CANNOT trigger two Gemini calls.
  */
 export async function summarizeArticleById(
   id: string,
@@ -224,51 +346,146 @@ export async function summarizeArticleById(
 ): Promise<{ success: boolean; article?: ArticleDocument; error?: string }> {
   await connectToDatabase();
 
-  const doc = await Article.findById(id);
-  if (!doc) {
+  // First, check current state
+  const existing = await Article.findById(id);
+  if (!existing) {
     return { success: false, error: "Article not found" };
   }
 
-  if (doc.summaryStatus === "completed" && !forceRetry) {
-    return { success: true, article: serializeArticle(doc) };
+  if (existing.summaryStatus === "completed" && !forceRetry) {
+    return { success: true, article: serializeArticle(existing as ArticleModelDocument) };
+  }
+
+  // Prevent unlimited retries (max 5 retries)
+  if (existing.retryCount && existing.retryCount >= 5 && !forceRetry) {
+    return {
+      success: false,
+      error: "Maximum retry limit reached for this article",
+      article: serializeArticle(existing as ArticleModelDocument),
+    };
+  }
+
+  // Check if stuck in processing past cutoff
+  const staleCutoff = new Date(Date.now() - APP_CONFIG.staleProcessingTimeoutMs);
+  const isStaleProcessing =
+    existing.summaryStatus === "processing" &&
+    existing.summaryStartedAt &&
+    new Date(existing.summaryStartedAt) < staleCutoff;
+
+  // ATOMIC LOCK: Transition from 'pending' | 'failed' (or stale 'processing' or forceRetry) -> 'processing'
+  const allowedStatuses: string[] = ["pending", "failed"];
+  if (isStaleProcessing || forceRetry) {
+    allowedStatuses.push("processing");
+  }
+  if (forceRetry) {
+    allowedStatuses.push("completed");
+  }
+
+  const now = new Date();
+  const lockQuery = {
+    _id: id,
+    summaryStatus: { $in: allowedStatuses },
+  } as unknown as Parameters<typeof Article.findOneAndUpdate>[0];
+
+  const lockUpdate = {
+    $set: {
+      summaryStatus: "processing",
+      summaryStartedAt: now,
+    },
+    $inc: { retryCount: 1 },
+  } as unknown as Parameters<typeof Article.findOneAndUpdate>[1];
+
+  const lockedDoc = (await Article.findOneAndUpdate(
+    lockQuery,
+    lockUpdate,
+    { new: true }
+  )) as ArticleModelDocument | null;
+
+  // If another request grabbed the lock first, wait/return current article
+  if (!lockedDoc) {
+    logger.info("NewsService", `Article ${id} is already being processed by another worker.`);
+    const currentDoc = await Article.findById(id);
+    return {
+      success: currentDoc?.summaryStatus === "completed",
+      article: currentDoc ? serializeArticle(currentDoc as ArticleModelDocument) : undefined,
+      error:
+        currentDoc?.summaryStatus === "processing"
+          ? "Article summary is currently processing"
+          : currentDoc?.summaryError || "Concurrent processing lock in place",
+    };
   }
 
   // Ensure content is present; if empty, re-attempt extraction
-  if (!doc.content || doc.content.length < 50) {
-    const extracted = await extractArticleContent(doc.sourceUrl, doc.description);
+  if (!lockedDoc.content || lockedDoc.content.length < 50) {
+    const extracted = await extractArticleContent(lockedDoc.sourceUrl, lockedDoc.description);
     if (extracted.content) {
-      doc.content = extracted.content;
-      await doc.save();
+      lockedDoc.content = extracted.content;
+      await lockedDoc.save();
     }
   }
 
-  doc.summaryStatus = "processing";
-  await doc.save();
+  try {
+    const summaryResult = await generateArticleSummary({
+      title: lockedDoc.title,
+      content: lockedDoc.content || lockedDoc.description,
+      url: lockedDoc.sourceUrl,
+      category: lockedDoc.category as NewsCategory,
+    });
 
-  const summaryResult = await generateArticleSummary({
-    title: doc.title,
-    content: doc.content || doc.description,
-    url: doc.sourceUrl,
-    category: doc.category as NewsCategory,
-  });
+    if (summaryResult.success && summaryResult.summary) {
+      const updated = await Article.findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            summaryStatus: "completed",
+            summary: summaryResult.summary,
+            summarizedAt: new Date(),
+            summaryError: null,
+          },
+        },
+        { new: true }
+      );
 
-  if (summaryResult.success && summaryResult.summary) {
-    doc.summaryStatus = "completed";
-    doc.summary = summaryResult.summary;
-    doc.summarizedAt = new Date();
-    doc.summaryError = null;
-    await doc.save();
+      return {
+        success: true,
+        article: updated ? serializeArticle(updated as ArticleModelDocument) : undefined,
+      };
+    } else {
+      const errMessage = summaryResult.error || "Failed to generate summary";
+      const updated = await Article.findByIdAndUpdate(
+        id,
+        {
+          $set: {
+            summaryStatus: "failed",
+            summaryError: errMessage,
+          },
+        },
+        { new: true }
+      );
 
-    return { success: true, article: serializeArticle(doc) };
-  } else {
-    doc.summaryStatus = "failed";
-    doc.summaryError = summaryResult.error || "Failed to generate summary";
-    await doc.save();
+      return {
+        success: false,
+        error: errMessage,
+        article: updated ? serializeArticle(updated as ArticleModelDocument) : undefined,
+      };
+    }
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const updated = await Article.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          summaryStatus: "failed",
+          summaryError: errMsg,
+        },
+      },
+      { new: true }
+    );
 
     return {
       success: false,
-      error: doc.summaryError,
-      article: serializeArticle(doc),
+      error: errMsg,
+      article: updated ? serializeArticle(updated as ArticleModelDocument) : undefined,
     };
   }
 }

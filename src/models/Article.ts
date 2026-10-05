@@ -1,9 +1,11 @@
-import { Schema, model, models, type Model, type Document } from "mongoose";
+import { Schema, model, models, type Model, type HydratedDocument } from "mongoose";
 import type { ArticleDocument as IArticleDocument } from "@/types/news";
 
-export interface ArticleModelDocument extends Omit<IArticleDocument, "_id">, Document {}
+export type ArticleModelFields = Omit<IArticleDocument, "_id">;
 
-const ArticleSchema = new Schema(
+export type ArticleModelDocument = HydratedDocument<ArticleModelFields>;
+
+const ArticleSchema = new Schema<ArticleModelFields>(
   {
     source: {
       type: String,
@@ -67,6 +69,15 @@ const ArticleSchema = new Schema(
       default: "pending",
       index: true,
     },
+    summaryStartedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
+    retryCount: {
+      type: Number,
+      default: 0,
+    },
     summary: {
       type: Schema.Types.Mixed,
       default: null,
@@ -93,5 +104,19 @@ ArticleSchema.index({
   publishedAt: -1,
 });
 
-export const Article: Model<ArticleModelDocument> =
-  models.Article || model<ArticleModelDocument>("Article", ArticleSchema);
+// Compound index for source + category + publishedAt
+ArticleSchema.index({
+  source: 1,
+  category: 1,
+  publishedAt: -1,
+});
+
+// Compound index for detecting stuck jobs
+ArticleSchema.index({
+  summaryStatus: 1,
+  summaryStartedAt: 1,
+});
+
+// Mongoose Model with HydratedDocument support
+export const Article: Model<ArticleModelFields> =
+  models.Article || model<ArticleModelFields>("Article", ArticleSchema);

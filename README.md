@@ -1,65 +1,87 @@
-# The Hindu AI News Aggregator & Intelligence Engine
+# SIGNAL — AI News Intelligence Engine (The Hindu & Bhaskar English)
 
-A production-ready AI News Aggregator and Summarization platform built with **Next.js 16 (App Router)**, **TypeScript**, **Tailwind CSS**, **MongoDB**, **Mongoose**, **Zod**, and the official **Google Gemini API** (`@google/genai`).
+A production-ready AI News Aggregator and Summarization platform built with **Next.js 16 (App Router)**, **TypeScript** (Strict, zero `any`), **Tailwind CSS**, **MongoDB**, **Mongoose**, **Zod**, and the official **Google Gemini API** (`@google/genai`).
 
-The platform ingests real-time RSS feeds from **The Hindu** (Technology & Business), extracts full article reporting with SSRF protection, synthesizes in-depth (800–1,500 word) structured summaries with Google Gemini, stores results in MongoDB with status tracking, and presents them in an executive-grade responsive reader.
+The platform ingests real-time RSS feeds from **The Hindu** & **Bhaskar English** (Technology & Business), extracts full reporting with rigorous SSRF protection (private IP blocking, manual redirect enforcement, payload size limits), synthesizes in-depth structured summaries with Google Gemini, stores results in MongoDB with atomic status locking and stale worker recovery, and presents them in an executive-grade responsive reader with a full Operations Admin Panel (`/admin`).
 
 ---
 
 ## Architecture Pipeline
 
 ```
-The Hindu RSS Feeds (Technology & Business)
+The Hindu & Bhaskar English RSS Feeds (Tech & Business)
                │
                ▼
-           RSS Parser (Deduplication & URL Normalization)
+   RSS Parser (Deduplication, Normalization, Resilient Error Handling)
                │
                ▼
-       Article Extractor (Cheerio + SSRF Domain Guard)
+   Article Extractor (Concurrent p-limit, SSRF DNS/IP Guard, Size Caps)
                │
                ▼
-     Category Detection (Technology vs. Business)
+   MongoDB Document Store (Pending State, Upsert Deduplication)
                │
                ▼
-    Gemini Intelligence Engine (Queue Limiter + Exponential Backoff)
+   Atomic Lock & Stale Job Recovery (Pending/Failed -> Processing)
+               │
+               ▼
+   Gemini Intelligence Engine (Queue Limiter, Jittered Backoff, Prompt Sanitizer)
                │
                ▼
    Strict Zod Schema Validation (Technology & Business Schemas)
                │
                ▼
-      MongoDB / Mongoose Document Store (Indexed & Cached)
+   MongoDB Final State (Completed with Structured Summary)
                │
                ▼
-        Next.js App Router (Dynamic SSR + Live Search)
-               │
-               ▼
-   AI News Reader & Admin Pipeline Control Dashboard
+   Next.js App Router & Executive Admin Dashboard (/admin)
 ```
 
 ---
 
-## Features
+## Production Security & Resilience Features
 
-- **Live RSS Ingestion**: Ingests real-time feeds from *The Hindu* (`sci-tech/technology` & `business`).
-- **Article Scraping & SSRF Protection**: Cleans away ads, paywalls, and cookie banners using `cheerio`. Enforces an allowed domain whitelist (`thehindu.com`, `www.thehindu.com`).
-- **Deep AI Summaries**: Uses prompt engineering tailored specifically for technology and business journalism (preserving financial metrics, RBI/SEBI regulations, technical concepts, quotes, and dates).
-- **Strict Validation with Zod**: Validates structured Gemini JSON output before persisting to the database.
-- **Controlled Concurrency & Rate Limiting**: Built-in queue (`p-limit`) and exponential backoff retry mechanism.
-- **Dynamic Search & Filtering**: Multi-field search across titles, descriptions, overviews, and key takeaways.
-- **Admin & Sync Control Dashboard**: Interactive web UI (`/admin`) for manual RSS sync, status monitoring, and failed summary retries.
-- **Scheduled Synchronization**: Secure webhook endpoint (`POST /api/news/sync`) protected with `CRON_SECRET`.
+- **SSRF Protection (`src/lib/security/ssrf.ts`)**:
+  - DNS resolution validation (`assertSafeDns`)
+  - Loopback, private, carrier-grade NAT, and link-local IP blocking (`isPrivateIp` via `ipaddr.js`)
+  - Disallows automatic redirects (`redirect: "manual"`), enforces maximum 3 hops, re-validates every redirect destination
+  - Blocks unsafe protocols (`file:`, `ftp:`, `data:`, `gopher:`, `javascript:`)
+  - Response size limit (2MB) and extracted text limit (20,000 characters)
+
+- **Atomic Gemini Processing Locks & Stale Worker Recovery**:
+  - MongoDB atomic `findOneAndUpdate` ensures two simultaneous requests never trigger duplicate Gemini calls
+  - `summaryStartedAt` timestamp tracks in-flight generation
+  - Automatic stale job recovery resets crashed/timed-out jobs (>5 min) back to `pending`
+  - Max retry cap per article (5 retries) prevents infinite retry loops
+
+- **API Security & Rate Limiting**:
+  - `POST /api/news/sync`: Protected by `CRON_SECRET` header or Bearer token (strictly required in production)
+  - `POST /api/news/[id]/summarize`: IP-based sliding window rate limiter (10 requests/min), MongoDB ObjectId validation, restricted `forceRetry`
+  - `GET /api/news`: Zod query validation (`PaginationQuerySchema`), bounded limits (1–100), regex escaping (`escapeRegex`) preventing ReDoS
+
+- **Gemini Resilience & Prompt Injection Defense**:
+  - Untrusted scraped content is sanitized and demarcated with explicit isolation boundary tags
+  - Concurrency queue (`p-limit`, default 3) prevents flooding Gemini quota
+  - Exponential backoff with random jitter (±20%) gracefully recovers from HTTP 429, 500, 503, and quota errors
+  - Malformed JSON recovery parser repairs trailing commas and extracts root JSON objects
+  - Strict Zod validation guarantees schema conformity before database persistence
+
+- **Operations Admin Dashboard (`/admin`)**:
+  - Overview metrics: Total articles, completed, pending/processing, and failed summaries
+  - Feed sync controls: "Sync Feeds Now" and "Retry Failed"
+  - Article registry with status filter, retry trigger, and deletion
+  - System health display verifying all active protections
 
 ---
 
 ## Tech Stack
 
 - **Framework**: Next.js 16 (App Router, Turbopack, Server Components)
-- **Language**: TypeScript (Strict, no `any`)
+- **Language**: TypeScript (Strict, 0 `any` types)
 - **Styling**: Tailwind CSS v4, Glassmorphism design system
-- **Database**: MongoDB with Mongoose (Cached connection pool for Next.js hot-reloads)
+- **Database**: MongoDB with Mongoose (Connection pooling, compound indexes)
 - **AI SDK**: Google GenAI TypeScript SDK (`@google/genai`)
 - **Validation**: Zod
-- **Testing**: Vitest
+- **Testing**: Vitest (Unit, SSRF, schema, and API security test suites)
 
 ---
 
@@ -99,8 +121,8 @@ GEMINI_API_KEY=your_actual_gemini_api_key_here
 # Optional: Gemini model override (defaults to gemini-2.5-flash)
 GEMINI_MODEL=gemini-2.5-flash
 
-# Optional: Bearer token secret to secure /api/news/sync
-CRON_SECRET=your_cron_secret_token
+# Bearer token secret to secure /api/news/sync (Required in production)
+CRON_SECRET=your_secure_cron_secret_token
 ```
 
 ### 4. Running Locally
@@ -115,7 +137,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ---
 
-## Running Automated News Synchronization
+## Running News Synchronization
 
 ### Option A: Via Admin Dashboard
 
@@ -124,23 +146,22 @@ Navigate to [http://localhost:3000/admin](http://localhost:3000/admin) and click
 ### Option B: Via API Endpoint
 
 ```bash
-# Unprotected (if CRON_SECRET is empty)
-curl -X POST http://localhost:3000/api/news/sync
-
-# Protected with CRON_SECRET
 curl -X POST http://localhost:3000/api/news/sync \
-  -H "Authorization: Bearer your_cron_secret_token"
+  -H "Authorization: Bearer your_secure_cron_secret_token"
 ```
 
 To retry all failed summaries:
 
 ```bash
-curl -X POST "http://localhost:3000/api/news/sync?retryFailed=true"
+curl -X POST "http://localhost:3000/api/news/sync?retryFailed=true" \
+  -H "Authorization: Bearer your_secure_cron_secret_token"
 ```
 
-### Option C: Cron Service (e.g. Vercel Cron, GitHub Actions, crontab)
+### Option C: GitHub Actions Workflow
 
-Set up a periodic POST request every 30 minutes to `/api/news/sync` with the `Authorization` header.
+An automated workflow (`.github/workflows/sync-news.yml`) runs hourly with:
+- Concurrency locking to prevent overlapping sync executions
+- Mandatory `CRON_SECRET` and `APP_URL` repository secret verification
 
 ---
 
@@ -150,45 +171,49 @@ Set up a periodic POST request every 30 minutes to `/api/news/sync` with the `Au
 src/
 ├── app/
 │   ├── page.tsx                     # Home page (All News, Search, Hero)
-│   ├── technology/page.tsx          # Technology Category feed
-│   ├── business/page.tsx            # Business Category feed
-│   ├── article/[id]/page.tsx        # Dynamic Article view with deep summary
+│   ├── technology/page.tsx          # Technology category feed
+│   ├── business/page.tsx            # Business category feed
+│   ├── article/[id]/page.tsx        # Dynamic article view with deep summary
 │   ├── admin/page.tsx               # Admin Sync & Pipeline Control Center
 │   ├── api/
 │   │   ├── news/
-│   │   │   ├── route.ts             # GET /api/news (pagination, filters, search)
-│   │   │   ├── sync/route.ts        # POST /api/news/sync (RSS ingestion pipeline)
+│   │   │   ├── route.ts             # GET /api/news (Zod pagination, regex escaping)
+│   │   │   ├── sync/route.ts        # POST /api/news/sync (CRON_SECRET protected)
 │   │   │   └── [id]/
-│   │   │       ├── route.ts         # GET /api/news/[id]
+│   │   │       ├── route.ts         # GET & DELETE /api/news/[id]
 │   │   │       └── summarize/
-│   │   │           └── route.ts     # POST /api/news/[id]/summarize (retry/on-demand)
-│   │   └── stats/route.ts           # GET /api/stats (pipeline statistics)
+│   │   │           └── route.ts     # POST /api/news/[id]/summarize (rate limited)
+│   │   └── stats/route.ts           # GET /api/stats (pipeline statistics & auto-recovery)
 │   ├── globals.css                  # Theme tokens and glassmorphism styling
-│   └── layout.tsx                   # App layout with Header, Footer, SEO metadata
+│   └── layout.tsx                   # App layout with Header, Footer, Open Graph/Twitter metadata
 │
 ├── components/
-│   ├── Header.tsx                   # Navigation with Live Sync button
-│   ├── Footer.tsx                   # Attribution to The Hindu & AI disclosures
-│   ├── CategoryNav.tsx              # Category tabs with article counts
-│   ├── SearchBar.tsx                # Multi-field search with debouncing
+│   ├── Header.tsx                   # Navigation with Admin link & Live Sync
+│   ├── Footer.tsx                   # Attribution & AI disclosures
+│   ├── CategoryTabs.tsx             # Category tabs with live counts
+│   ├── SearchDialog.tsx             # Modal search with keyboard shortcuts
 │   ├── NewsCard.tsx                 # News card with category badges & takeaways
-│   ├── NewsList.tsx                 # Grid layout with pagination
-│   ├── SummaryView.tsx              # Full executive summary presentation
-│   ├── StatusBadge.tsx              # Visual status indicators
-│   ├── LoadingSkeleton.tsx          # Loading states
-│   └── ErrorState.tsx               # Graceful error screens
+│   ├── NewsGrid.tsx                 # Grid layout with pagination
+│   └── SummaryView.tsx              # Executive AI summary presentation
 │
 ├── config/
-│   └── feeds.ts                     # RSS feed URLs & category definitions
+│   └── feeds.ts                     # RSS feed URLs, whitelists & APP_CONFIG limits
 ├── lib/
-│   ├── mongodb.ts                   # Cached Mongoose connection
-│   └── env.ts                       # Environment variable helpers
+│   ├── mongodb.ts                   # Cached Mongoose connection pool
+│   ├── env.ts                       # Zod-validated environment config
+│   ├── security/
+│   │   ├── ssrf.ts                  # SSRF protection, DNS check & safeFetch
+│   │   └── rate-limit.ts            # Sliding window in-memory rate limiter
+│   ├── logging/
+│   │   └── logger.ts                # Structured JSON logging (redacts secrets)
+│   └── validation/
+│       └── api.schema.ts            # Zod schemas for pagination, IDs, bodies
 ├── models/
 │   └── Article.ts                   # Mongoose Article Schema & compound indexes
 ├── prompts/
-│   ├── technology.prompt.ts         # Technology prompt from tech-prompt.md
-│   ├── business.prompt.ts           # Business prompt from business-prompt.md
-│   └── index.ts                     # Category prompt resolver & interpolator
+│   ├── technology.prompt.ts         # Technology prompt
+│   ├── business.prompt.ts           # Business prompt
+│   └── index.ts                     # Prompt interpolator
 ├── schemas/
 │   ├── technology-summary.schema.ts # Zod schema for technology summaries
 │   ├── business-summary.schema.ts   # Zod schema for business summaries
@@ -196,10 +221,10 @@ src/
 ├── services/
 │   ├── rss.service.ts               # XML parsing, deduplication, URL normalization
 │   ├── article-extractor.service.ts # Cheerio scraping & SSRF domain validation
-│   ├── gemini.service.ts            # Google GenAI API with retry and queue
-│   └── news.service.ts              # Business logic & database operations
+│   ├── gemini.service.ts            # Google GenAI API with retry, jitter & queue
+│   └── news.service.ts              # Atomic locking, stale recovery & database operations
 └── types/
-    └── news.ts                      # Strict TypeScript types
+    └── news.ts                      # Strict TypeScript domain interfaces
 ```
 
 ---
@@ -212,24 +237,19 @@ Run the test suite with Vitest:
 npm test
 ```
 
-Tests cover:
-- URL normalization & UTM tracking removal
+Unit tests cover:
+- URL normalization & tracking removal
 - Technology and Business Zod summary schemas
-- Gemini markdown code fence cleaning
-- SSRF protection & domain validation
-
----
-
-## Production Build
-
-```bash
-npm run build
-npm start
-```
+- Gemini markdown code fence cleaning & malformed JSON repair
+- SSRF URL validation, protocol blocking, and private IP rejection
+- API pagination bounds & MongoDB ObjectId validation
+- Regex special character escaping (ReDoS prevention)
+- In-memory rate limiting per client IP
+- Gemini prompt injection sanitization
 
 ---
 
 ## License & Attribution
 
-- News content is sourced from RSS feeds provided by **The Hindu** ([thehindu.com](https://www.thehindu.com)).
-- Summaries are generated using Google Gemini for educational and informational purposes.
+- News content is sourced from RSS feeds provided by **The Hindu** ([thehindu.com](https://www.thehindu.com)) and **Bhaskar English** ([bhaskarenglish.in](https://www.bhaskarenglish.in)).
+- Summaries are synthesized using Google Gemini for educational and informational purposes.

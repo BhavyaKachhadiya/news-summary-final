@@ -94,6 +94,8 @@ export interface ArticleDocument {
   fetchedAt: Date | string;
   summarizedAt: Date | string | null;
   summaryStatus: SummaryStatus;
+  summaryStartedAt?: Date | string | null;
+  retryCount?: number;
   summary: ArticleSummary | null;
   summaryError: string | null;
   createdAt: Date | string;

@@ -39,6 +39,19 @@ export const metadata: Metadata = {
     "SEBI",
   ],
   authors: [{ name: "SIGNAL Editorial" }],
+  openGraph: {
+    title: "SIGNAL — AI Technology & Business Intelligence",
+    description:
+      "Editorial news platform synthesizing in-depth Technology and Business reporting from The Hindu into comprehensive intelligence summaries with Google Gemini.",
+    type: "website",
+    siteName: "SIGNAL AI News",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "SIGNAL — AI Technology & Business Intelligence",
+    description:
+      "Editorial news platform synthesizing in-depth Technology and Business reporting from The Hindu into comprehensive intelligence summaries with Google Gemini.",
+  },
 };
 
 export default function RootLayout({
