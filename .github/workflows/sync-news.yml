@@ -14,6 +14,7 @@ jobs:
   sync-feeds:
     name: Sync RSS Feeds (The Hindu & Bhaskar English)
     runs-on: ubuntu-latest
+    environment: Production
     timeout-minutes: 10
 
     steps:
