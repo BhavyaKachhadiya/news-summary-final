@@ -55,7 +55,6 @@ export function Header() {
     { href: "/", label: "HOME" },
     { href: "/technology", label: "TECHNOLOGY" },
     { href: "/business", label: "BUSINESS" },
-    { href: "/admin", label: "ADMIN" },
   ];
 
   return (

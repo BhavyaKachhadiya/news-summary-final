@@ -20,17 +20,10 @@ jobs:
       - name: Trigger News Ingestion via API
         env:
           APP_URL: ${{ secrets.APP_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
           if [ -z "$APP_URL" ]; then
             echo "::error::APP_URL secret is not set in GitHub repository secrets."
             echo "Please navigate to Settings > Secrets and variables > Actions, and add APP_URL (e.g. https://your-site.vercel.app)."
-            exit 1
-          fi
-
-          if [ -z "$CRON_SECRET" ]; then
-            echo "::error::CRON_SECRET secret is not set in GitHub repository secrets."
-            echo "Please navigate to Settings > Secrets and variables > Actions, and add CRON_SECRET matching your production app environment."
             exit 1
           fi
 
@@ -40,7 +33,6 @@ jobs:
           echo "Triggering RSS sync at: $ENDPOINT (hourly schedule)"
 
           HTTP_RESPONSE=$(curl -s -S -w "\nHTTP_STATUS:%{http_code}" -X POST "$ENDPOINT" \
-            -H "Authorization: Bearer $CRON_SECRET" \
             -H "Content-Type: application/json" \
             --connect-timeout 30 \
             --max-time 180)

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getArticleById, deleteArticleById } from "@/services/news.service";
 import { MongoIdSchema } from "@/lib/validation/api.schema";
-import { env } from "@/lib/env";
 import { logger } from "@/lib/logging/logger";
 
 export const dynamic = "force-dynamic";
@@ -54,21 +53,6 @@ export async function DELETE(
         { error: "Invalid article ID format" },
         { status: 400 }
       );
-    }
-
-    // Require CRON_SECRET if configured or if in production
-    const configuredSecret = env.CRON_SECRET;
-    if (configuredSecret) {
-      const authHeader = request.headers.get("authorization");
-      const bearerToken = authHeader?.startsWith("Bearer ")
-        ? authHeader.slice(7)
-        : null;
-      if (bearerToken !== configuredSecret) {
-        return NextResponse.json(
-          { error: "Unauthorized: Invalid or missing token" },
-          { status: 401 }
-        );
-      }
     }
 
     const deleted = await deleteArticleById(id);
